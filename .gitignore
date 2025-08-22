@@ -1,3 +1,6 @@
 .env
 _pycache__
+__pycache__
 .DS_Store
+temp.json
+.venv
