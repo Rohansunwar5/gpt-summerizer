@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 from config import config
 from services.account_manager import AccountRotationManager
+from services.helper import generate_message_statistics
 from services.telegram_extractor import TelegramMessageExtractor
 from services.gpt_summerizer import GPTSummarizer
 
@@ -102,6 +103,8 @@ def analyze_channel():
         
         
         analysis_result = summarizer.analyze_telegram_group(messages_data, response_language)
+
+        static_analysis = generate_message_statistics(messages_data['messages'], [])
         
         return jsonify({
             "success": True,
@@ -116,7 +119,8 @@ def analyze_channel():
                 "last_message": messages_data.get('last_message_timestamp')
             },
             "account_used": messages_data['account_used'],
-            "processed_at": datetime.now().isoformat()
+            "processed_at": datetime.now().isoformat(),
+            **static_analysis,
         })
         
     except Exception as e:
