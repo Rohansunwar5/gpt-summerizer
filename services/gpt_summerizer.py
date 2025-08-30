@@ -76,6 +76,25 @@ class GPTSummarizer:
             logger.error(f"Error analyzing group: {str(e)}")
             raise e
     
+    def _get_comprehensive_prompt_structure(self) -> str:
+        """Return the comprehensive analysis prompt structure"""
+        return """
+        Create a unified, comprehensive analysis summary covering (translate if the messages are from language other than English):
+
+        1. Activity Overview: Overall trends, peak activity periods, engagement patterns
+        2. Key Topics & Themes: Identify and elaborate on 5-7 main discussion topics
+        3. Important Events: Timeline of significant announcements, decisions, or events
+        4. User Dynamics: Most influential users, community behaviors, interaction patterns
+        5. Textual Pattern Mining
+        6. Alias Pivoting (Actor Enumeration)
+        7. Human Trafficking / Adult Scam Connections (if any)
+        8. Cryptocurrency Indicators (Hidden) if any
+        9. User-to-Alias Relationship Map in text
+        10. Red Flags: Any concerning patterns, suspicious activities, fraud or content requiring attention
+        11. Actionable Insights: Specific recommendations based on the analysis
+        12. Executive Summary: 3-5 bullet points with the most critical findings
+        """
+    
     def summarize_combined_messages(self, all_messages: List[Dict], channel_name: str, response_language: str = "english") -> str:
         """
         Summarize combined messages from multiple scrapes (for bookmark alerts)
@@ -111,51 +130,60 @@ class GPTSummarizer:
             return len(text) // 4
         
     def _summarize_small_dataset(self, messages: List[Dict], channel_name: str, language_info: Dict) -> str:
-        """Handle small datasets (< 1000 messages) - Original approach"""
+        """Handle small datasets (< 1000 messages) with comprehensive analysis"""
         time_periods = self._group_messages_by_period(messages)
         
+        # Extract user activity and statistics
+        user_activity = defaultdict(int)
+        for msg in messages:
+            sender = msg.get('sender', 'Unknown')
+            user_activity[sender] += 1
+        
+        top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:10]
+        total_messages = len(messages)
+        
         prompt = f"""
-        Summarize the activity from channel "{channel_name}" over the past period.
+        Analyze this Telegram channel "{channel_name}" with comprehensive analysis:
         
-        Total messages: {len(messages)}
-        Time periods covered: {len(time_periods)}
+        CHANNEL STATISTICS:
+        - Total messages: {total_messages}
+        - Unique users: {len(user_activity)}
+        - Time periods covered: {len(time_periods)}
         
-        Messages grouped by time:
-        {self._format_time_periods(time_periods)}
+        TOP USERS:
+        {chr(10).join([f"- {user}: {count} messages ({count/total_messages:.1%})" for user, count in top_users])}
         
-        Recent messages sample:
+        MESSAGE DISTRIBUTION:
+        {self._format_message_distribution(time_periods)}
+        
+        RECENT MESSAGES SAMPLE:
         {self._format_messages_sample(messages, max_messages=50)}
         
-        Please provide:
-        1. Overall activity summary
-        2. Key topics and discussions
-        3. Important announcements or decisions
-        4. Notable user activities
-        5. Any concerning patterns or red flags
+        {self._get_comprehensive_prompt_structure()}
         
-        {"" if language_info['english'].lower() == "english" else f"Provide the summary in {language_info['english']} ({language_info['native']})."}
+        {"" if language_info['english'].lower() == "english" else f"Provide the analysis in {language_info['english']} ({language_info['native']})."}
         """
         
         response = self.client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert at summarizing Telegram channel activity for daily digests."
+                    "content": "You are an expert analyst specializing in comprehensive Telegram channel analysis."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=2000,
+            max_tokens=4000,
             temperature=0.7
         )
         
         return response.choices[0].message.content.strip()
     
     def _summarize_medium_dataset(self, messages: List[Dict], channel_name: str, language_info: Dict) -> str:
-        """Handle medium datasets (1000-10000 messages) using two-pass approach"""
+        """Handle medium datasets (1000-10000 messages) using two-pass approach with comprehensive analysis"""
         logger.info(f"Using two-pass summarization for {len(messages)} messages")
         
         # First pass: Create daily summaries
@@ -174,9 +202,9 @@ class GPTSummarizer:
                 sender = msg.get('sender', 'Unknown')
                 user_activity[sender] += 1
                 
-                # Simple topic extraction (you could make this more sophisticated)
+                # Simple topic extraction
                 text = msg.get('text', '')
-                if len(text) > 50:  # Consider longer messages as potentially topic-worthy
+                if len(text) > 50:
                     topics.append(text[:200])
             
             # Get top users for this day
@@ -188,12 +216,12 @@ class GPTSummarizer:
                 'unique_users': len(user_activity),
                 'top_users': top_users_day,
                 'sample_topics': topics[:5],
-                'messages_sample': day_messages[:10]  # Keep sample for context
+                'messages_sample': day_messages[:10]
             }
             
             daily_summaries.append(daily_summary)
         
-        # Second pass: Synthesize daily summaries
+        # Second pass: Synthesize daily summaries with comprehensive analysis
         prompt = self._create_medium_synthesis_prompt(
             channel_name,
             len(messages),
@@ -202,18 +230,18 @@ class GPTSummarizer:
         )
         
         response = self.client.chat.completions.create(
-            model="gpt-4o-mini",  # Using mini model for cost efficiency
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert at synthesizing daily activity summaries into comprehensive overviews."
+                    "content": "You are an expert at synthesizing daily activity summaries into comprehensive, actionable insights following the comprehensive analysis framework."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=3000,
+            max_tokens=6000,
             temperature=0.7
         )
         
@@ -221,21 +249,20 @@ class GPTSummarizer:
     
     def _create_medium_synthesis_prompt(self, channel_name: str, total_messages: int,
                                        daily_summaries: List[Dict], language_info: Dict) -> str:
-        """Create synthesis prompt for medium datasets"""
+        """Create synthesis prompt for medium datasets with comprehensive analysis"""
         language_instruction = ""
         if language_info['english'].lower() != "english":
-            language_instruction = f"\n\nProvide the summary in {language_info['english']} ({language_info['native']})."
+            language_instruction = f"\n\nIMPORTANT: Provide the entire analysis in {language_info['english']} ({language_info['native']})."
         
         # Format daily summaries
         summaries_text = []
-        for summary in daily_summaries[-20:]:  # Last 20 days max to keep prompt size manageable
+        for summary in daily_summaries[-20:]:
             day_text = f"""
             Date: {summary['date']}
             Messages: {summary['message_count']} | Users: {summary['unique_users']}
             Top Users: {', '.join([f"{u[0]} ({u[1]})" for u in summary['top_users'][:3]])}
             """
             
-            # Add sample topics if available
             if summary['sample_topics']:
                 topics_preview = ' | '.join([t[:50] + '...' for t in summary['sample_topics'][:3]])
                 day_text += f"Topics: {topics_preview}\n"
@@ -250,7 +277,7 @@ class GPTSummarizer:
         most_active_days = sorted(daily_summaries, key=lambda x: x['message_count'], reverse=True)[:5]
         
         return f"""
-        Synthesize the activity from channel "{channel_name}" based on daily summaries:
+        Synthesize the activity from channel "{channel_name}" into a comprehensive analysis:
         
         OVERALL STATISTICS:
         - Total messages: {total_messages}
@@ -266,24 +293,19 @@ class GPTSummarizer:
         {chr(10).join(summaries_text)}
         {"="*60}
         
-        Based on this data, provide a comprehensive summary covering:
+        {self._get_comprehensive_prompt_structure()}
         
-        1. **Activity Trends**: Overall engagement patterns, peak periods, growth/decline
+        Focus particularly on:
+        - Identifying patterns across different time periods
+        - Tracking user behavior changes over time
+        - Detecting emerging topics or themes
+        - Noting any suspicious activity patterns
         
-        2. **Key Topics**: Main discussion themes across the period
-        
-        3. **Community Dynamics**: Most active users, interaction patterns
-        
-        4. **Important Events**: Significant announcements or discussions
-        
-        5. **Actionable Insights**: 3-5 key takeaways or recommendations
-        
-        Format with clear headers and bullet points.
         {language_instruction}
         """
     
     def _summarize_large_dataset(self, messages: List[Dict], channel_name: str, language_info: Dict) -> str:
-        """Handle very large datasets (10000+ messages / 5-10MB) using multi-pass chunking"""
+        """Handle very large datasets (10000+ messages / 5-10MB) using multi-pass chunking with comprehensive analysis"""
         logger.info(f"Using multi-pass summarization for {len(messages)} messages")
         
         chunks = self._create_smart_chunks(messages, max_chunk_size=2000)
@@ -295,7 +317,7 @@ class GPTSummarizer:
             logger.info(f"Processing chunk {i+1}/{len(chunks)} with {len(chunk_data['messages'])} messages")
             
             chunk_prompt = f"""
-            Summarize this portion of messages from "{channel_name}":
+            Analyze this portion of messages from "{channel_name}" for comprehensive analysis:
             
             Time period: {chunk_data['start_date']} to {chunk_data['end_date']}
             Messages in chunk: {len(chunk_data['messages'])}
@@ -307,23 +329,25 @@ class GPTSummarizer:
             SAMPLE MESSAGES:
             {self._format_messages_sample(chunk_data['messages'], max_messages=50)}
             
-            Provide concise summary covering:
-            1. Main topics discussed
-            2. Key events or announcements  
-            3. Notable user behaviors
-            4. Any concerning content
+            Provide comprehensive analysis covering:
+            1. Main topics and themes
+            2. Key events and announcements
+            3. User dynamics and interactions
+            4. Any suspicious patterns or red flags
+            5. Potential alias pivoting observations
+            6. Cryptocurrency or scam indicators if present
             
-            Keep response under 500 words.
+            Keep analysis focused but thorough.
             """
             
             try:
                 response = self.client.chat.completions.create(
                     model="gpt-4o-mini",  
                     messages=[
-                        {"role": "system", "content": "Summarize this message chunk concisely, focusing on key information."},
+                        {"role": "system", "content": "Provide comprehensive analysis of this message chunk, focusing on key patterns and insights."},
                         {"role": "user", "content": chunk_prompt}
                     ],
-                    max_tokens=800,
+                    max_tokens=1200,
                     temperature=0.7
                 )
                 
@@ -338,7 +362,7 @@ class GPTSummarizer:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 continue
         
-        # Final synthesis
+        # Final synthesis with comprehensive analysis
         final_prompt = self._create_synthesis_prompt(
             channel_name, 
             len(messages), 
@@ -357,23 +381,87 @@ class GPTSummarizer:
                 language_info
             )
         
-        logger.info("Creating final synthesis with GPT-4o")
+        logger.info("Creating final comprehensive synthesis with GPT-4o")
         
         final_response = self.client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert at synthesizing multiple summaries into comprehensive, actionable insights."
+                    "content": "You are an expert at synthesizing multiple analyses into comprehensive, actionable insights following the comprehensive analysis framework."
                 },
                 {"role": "user", "content": final_prompt}
             ],
-            max_tokens=4000,
+            max_tokens=8000,
             temperature=0.7
         )
         
         return final_response.choices[0].message.content.strip()
     
+    def _create_synthesis_prompt(self, channel_name: str, total_messages: int, 
+                                 chunk_summaries: List[Dict], language_info: Dict) -> str:
+        """Create the final synthesis prompt with comprehensive analysis"""
+        language_instruction = ""
+        if language_info['english'].lower() != "english":
+            language_instruction = f"\n\nIMPORTANT: Provide the entire analysis in {language_info['english']} ({language_info['native']})."
+        
+        summaries_text = "\n\n".join([
+            f"**Chunk {cs['chunk_id']} ({cs['period']}, {cs['message_count']} messages):**\n{cs['summary']}"
+            for cs in chunk_summaries
+        ])
+        
+        return f"""
+        Synthesize these comprehensive analyses from channel "{channel_name}" into a unified, comprehensive overview:
+        
+        OVERALL STATISTICS:
+        - Total messages analyzed: {total_messages}
+        - Number of time chunks: {len(chunk_summaries)}
+        - Coverage period: {chunk_summaries[0]['period'].split(' to ')[0]} to {chunk_summaries[-1]['period'].split(' to ')[1]}
+        
+        CHUNK ANALYSES:
+        {"="*60}
+        {summaries_text}
+        {"="*60}
+        
+        {self._get_comprehensive_prompt_structure()}
+        
+        Additionally, provide:
+        - Cross-chunk pattern analysis
+        - Evolution of topics and themes over time
+        - Changes in user behavior across periods
+        - Timeline of significant events
+        - Risk assessment matrix
+        
+        Format the response with clear headers and structured sections for each analysis component.
+        {language_instruction}
+        """
+    
+    def _create_compressed_synthesis_prompt(self, channel_name: str, total_messages: int,
+                                           chunk_summaries: List[Dict], language_info: Dict) -> str:
+        """Create a compressed synthesis prompt if the full one is too large"""
+        language_instruction = ""
+        if language_info['english'].lower() != "english":
+            language_instruction = f"\n\nProvide analysis in {language_info['english']}."
+        
+        # Take summaries but focus on key findings
+        compressed_summaries = []
+        for cs in chunk_summaries:
+            compressed = cs['summary'][:300] + "..." if len(cs['summary']) > 300 else cs['summary']
+            compressed_summaries.append(f"Period {cs['period']}: {compressed}")
+        
+        return f"""
+        Synthesize comprehensive analysis from "{channel_name}" ({total_messages} total messages):
+        
+        Key findings from {len(chunk_summaries)} time periods:
+        {chr(10).join(compressed_summaries)}
+        
+        {self._get_comprehensive_prompt_structure()}
+        
+        Focus on the most critical findings and patterns across all periods.
+        {language_instruction}
+        """
+
+    # ... (keep all the existing helper methods unchanged)
     def _create_smart_chunks(self, messages: List[Dict], max_chunk_size: int = 2000) -> List[Dict]:
         """Create intelligent chunks based on time periods and message volume"""
         chunks = []
@@ -493,79 +581,6 @@ class GPTSummarizer:
         sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)[:10]
         return "\n".join([f"- {user}: {count} messages" for user, count in sorted_users])
     
-    def _create_synthesis_prompt(self, channel_name: str, total_messages: int, 
-                                 chunk_summaries: List[Dict], language_info: Dict) -> str:
-        """Create the final synthesis prompt"""
-        language_instruction = ""
-        if language_info['english'].lower() != "english":
-            language_instruction = f"\n\nIMPORTANT: Provide the entire summary in {language_info['english']} ({language_info['native']})."
-        
-        summaries_text = "\n\n".join([
-            f"**Chunk {cs['chunk_id']} ({cs['period']}, {cs['message_count']} messages):**\n{cs['summary']}"
-            for cs in chunk_summaries
-        ])
-        
-        return f"""
-        Synthesize these summaries from channel "{channel_name}" into a comprehensive overview:
-        
-        OVERALL STATISTICS:
-        - Total messages analyzed: {total_messages}
-        - Number of time chunks: {len(chunk_summaries)}
-        - Coverage period: {chunk_summaries[0]['period'].split(' to ')[0]} to {chunk_summaries[-1]['period'].split(' to ')[1]}
-        
-        CHUNK SUMMARIES:
-        {"="*60}
-        {summaries_text}
-        {"="*60}
-        
-        Create a unified, comprehensive summary that:
-        
-        1. **Activity Overview**: Overall trends, peak activity periods, engagement patterns
-        
-        2. **Key Topics & Themes**: Identify and elaborate on 5-7 main discussion topics across all chunks
-        
-        3. **Important Events**: Timeline of significant announcements, decisions, or events
-        
-        4. **User Dynamics**: Most influential users, community behaviors, interaction patterns
-        
-        5. **Red Flags**: Any concerning patterns, suspicious activities, or content requiring attention
-        
-        6. **Actionable Insights**: Specific recommendations based on the analysis
-        
-        7. **Executive Summary**: 3-5 bullet points with the most critical findings
-        
-        Format the response clearly with headers and bullet points for easy scanning.
-        {language_instruction}
-        """
-    
-    def _create_compressed_synthesis_prompt(self, channel_name: str, total_messages: int,
-                                           chunk_summaries: List[Dict], language_info: Dict) -> str:
-        """Create a compressed synthesis prompt if the full one is too large"""
-        language_instruction = ""
-        if language_info['english'].lower() != "english":
-            language_instruction = f"\n\nProvide summary in {language_info['english']}."
-        
-        # Take only the first 200 characters of each summary
-        compressed_summaries = []
-        for cs in chunk_summaries:
-            compressed = cs['summary'][:200] + "..."
-            compressed_summaries.append(f"Period {cs['period']}: {compressed}")
-        
-        return f"""
-        Synthesize activity from "{channel_name}" ({total_messages} total messages):
-        
-        Quick summaries from {len(chunk_summaries)} time periods:
-        {chr(10).join(compressed_summaries)}
-        
-        Provide concise overview covering:
-        1. Main activity trends
-        2. Top 5 discussion topics
-        3. Key events
-        4. Any red flags
-        5. Top 3 actionable insights
-        {language_instruction}
-        """
-    
     def _format_messages(self, messages: List[Dict]) -> str:
         """Format messages for prompt"""
         return "\n\n".join([
@@ -609,15 +624,7 @@ class GPTSummarizer:
         RECENT MESSAGES:
         {message_text}
         
-        Please provide a comprehensive analysis covering:
-        1. Channel Overview (detailed summary)
-        2. Most active users and their messages
-        3. Alias Pivoting (Actor Enumeration)
-        4. Textual Pattern Mining
-        5. Human Trafficking / Adult Scam Connections (if any)
-        6. Cryptocurrency Indicators (Hidden) if any
-        7. User-to-Alias Relationship Map
-        8. Key Insights
+        {self._get_comprehensive_prompt_structure()}
         {language_instruction}
         """
     

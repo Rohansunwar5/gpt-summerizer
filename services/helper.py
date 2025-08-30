@@ -19,8 +19,6 @@ def generate_message_statistics(messages, trigger_words):
         frequency_weekday = defaultdict(int)
         frequency_user = defaultdict(int)
         links = []
-        message_with_references = []
-        important_messages = {}
 
         for message in messages:
             try:
@@ -54,13 +52,6 @@ def generate_message_statistics(messages, trigger_words):
                         'message_id': message_part['message_id'],
                         'links': extracted_links
                     })
-
-                if '@' in text:
-                    is_important = True
-                    message_with_references.append(message_part['message_id'])
-                
-                if(is_important):
-                    important_messages[message_part['message_id']] = message_part
                 
             except Exception as e:
                 print(e)
@@ -71,8 +62,6 @@ def generate_message_statistics(messages, trigger_words):
             'frequency_weekday': frequency_weekday,
             'frequency_user': frequency_user,
             'links': links,
-            'message_with_references': message_with_references,
-            'important_messages': important_messages
         }
 
 def merge_message_statistics(stats1, stats2):
@@ -109,15 +98,5 @@ def merge_message_statistics(stats1, stats2):
     merged['links'] = []
     for stats in (stats1.get('links', []), stats2.get('links', [])):
         merged['links'].extend(stats)
-
-    # Merge message_with_references
-    merged['message_with_references'] = list(
-        set(stats1.get('message_with_references', []) + stats2.get('message_with_references', []))
-    )
-
-    # Merge important_messsages
-    merged['important_messages'] = {}
-    merged['important_messages'].update(stats1.get('important_messages', {}))
-    merged['important_messages'].update(stats2.get('important_messages', {}))
-
+        
     return dict(merged)
